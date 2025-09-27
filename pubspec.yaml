@@ -16,16 +16,13 @@ dev_dependencies:
     sdk: flutter
   flutter_launcher_icons: ^0.13.1
 
-# flutter_launcher_icons 설정은 루트 레벨!
-flutter_launcher_icons:
+flutter_launcher_icons:   # ⚠️ 반드시 루트 레벨 (flutter: 안 X)
   android: true
   ios: true
   image_path: assets/app_icon.png
 
 flutter:
   uses-material-design: true
-
-  # 앱에서 asset을 직접 쓸 때만 필요 (런처 아이콘 생성만이면 없어도 됨)
   assets:
     - assets/puzzles.json
     - assets/app_icon.png
