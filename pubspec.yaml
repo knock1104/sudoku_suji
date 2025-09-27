@@ -1,35 +1,31 @@
-name: namer_app
-description: A new Flutter project.
-
-publish_to: 'none'
-
-version: 0.0.1+1
+name: sudoku_suji
+description: Sudoku app
+publish_to: "none"
 
 environment:
-  sdk: '>=2.19.4 <4.0.0'
+  sdk: ">=3.3.0 <4.0.0"
 
 dependencies:
   flutter:
     sdk: flutter
-  provider: ^6.0.0
-  english_words: ^4.0.0
-  shared_preferences: ^2.2.3   # ✅ 추가
+  provider: ^6.0.5
+  shared_preferences: ^2.2.3
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^2.0.0
-
-flutter:
-  uses-material-design: true
-  assets:
-    - assets/puzzles.json
-    - assets/suji_kong.png
-
-    dev_dependencies:
   flutter_launcher_icons: ^0.13.1
 
+# flutter_launcher_icons 설정은 루트 레벨!
 flutter_launcher_icons:
   android: true
   ios: true
-  image_path: "assets/icon/app_icon.png"
+  image_path: assets/app_icon.png
+
+flutter:
+  uses-material-design: true
+
+  # 앱에서 asset을 직접 쓸 때만 필요 (런처 아이콘 생성만이면 없어도 됨)
+  assets:
+    - assets/puzzles.json
+    - assets/app_icon.png
