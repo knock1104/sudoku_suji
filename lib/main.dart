@@ -96,6 +96,10 @@ class MyAppState extends ChangeNotifier {
     try {
       final key = difficultyMap[uiDifficulty]!;
       final p = await SudokuRepo.load(key, number);
+
+      // 퍼즐 데이터 검증 (고정값-해답 일치 & 행/열/박스 중복 금지)
+      _validatePuzzle(p);
+
       grid = p.puzzle.map((r) => List<int>.from(r)).toList();
       fixed = List.generate(9, (r) => List.generate(9, (c) => p.puzzle[r][c] != 0));
       solution = p.solution.map((r) => List<int>.from(r)).toList();
@@ -108,6 +112,53 @@ class MyAppState extends ChangeNotifier {
     } finally {
       loading = false;
       notifyListeners();
+    }
+  }
+
+  // 퍼즐 데이터 검증
+  void _validatePuzzle(SudokuPuzzle p) {
+    // 고정값이 해답과 불일치 금지
+    for (int r = 0; r < 9; r++) {
+      for (int c = 0; c < 9; c++) {
+        final g = p.puzzle[r][c];
+        if (g != 0 && g != p.solution[r][c]) {
+          throw Exception('퍼즐(${uiDifficulty} / $number) 고정값이 해답과 다릅니다. (r=$r, c=$c)');
+        }
+      }
+    }
+    // 행/열/박스 내 고정값 중복 금지
+    bool _dupInUnit(List<int> vals) {
+      final seen = <int>{};
+      for (final v in vals) {
+        if (v == 0) continue;
+        if (seen.contains(v)) return true;
+        seen.add(v);
+      }
+      return false;
+    }
+
+    for (int r = 0; r < 9; r++) {
+      if (_dupInUnit(List.generate(9, (c) => p.puzzle[r][c]))) {
+        throw Exception('퍼즐 행 중복이 있습니다. (r=$r)');
+      }
+    }
+    for (int c = 0; c < 9; c++) {
+      if (_dupInUnit(List.generate(9, (r) => p.puzzle[r][c]))) {
+        throw Exception('퍼즐 열 중복이 있습니다. (c=$c)');
+      }
+    }
+    for (int br = 0; br < 9; br += 3) {
+      for (int bc = 0; bc < 9; bc += 3) {
+        final box = <int>[];
+        for (int r = br; r < br + 3; r++) {
+          for (int c = bc; c < bc + 3; c++) {
+            box.add(p.puzzle[r][c]);
+          }
+        }
+        if (_dupInUnit(box)) {
+          throw Exception('퍼즐 박스 중복이 있습니다. (r=$br~${br+2}, c=$bc~${bc+2})');
+        }
+      }
     }
   }
 
@@ -154,7 +205,7 @@ class MyAppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 현재 선택 칸에 정답 1칸 채우기
+  /// 기존: 현재 선택 칸에 정답 1칸 채우기 (단순)
   void hintOne() {
     if (selR == null || selC == null) return;
     final r = selR!, c = selC!;
@@ -162,6 +213,90 @@ class MyAppState extends ChangeNotifier {
     grid[r][c] = solution[r][c];
     notes[r][c].clear();
     notifyListeners();
+  }
+
+  /// 개선: 중복 오답을 자동 정리하고 정답 채우기
+  /// 반환값: 힌트 적용 전 제거된 오답 칸 수
+  int hintOneSafe() {
+    if (selR == null || selC == null) return 0;
+    final r = selR!, c = selC!;
+    if (fixed[r][c]) return 0;
+
+    final val = solution[r][c];
+
+    // 퍼즐 고정값과 충돌하는 정답이면 데이터 오류이므로 막기
+    bool _conflictWithFixed() {
+      // 행
+      for (int cc = 0; cc < 9; cc++) {
+        if (cc == c) continue;
+        if (fixed[r][cc] && grid[r][cc] == val) return true;
+      }
+      // 열
+      for (int rr = 0; rr < 9; rr++) {
+        if (rr == r) continue;
+        if (fixed[rr][c] && grid[rr][c] == val) return true;
+      }
+      // 박스
+      final br = (r ~/ 3) * 3, bc = (c ~/ 3) * 3;
+      for (int rr = br; rr < br + 3; rr++) {
+        for (int cc = bc; cc < bc + 3; cc++) {
+          if (rr == r && cc == c) continue;
+          if (fixed[rr][cc] && grid[rr][cc] == val) return true;
+        }
+      }
+      return false;
+    }
+
+    if (_conflictWithFixed()) {
+      throw Exception('퍼즐 데이터 오류: 힌트 값이 고정값과 충돌합니다.');
+    }
+
+    int cleared = 0;
+
+    // 같은 숫자가 들어 있으나 '해답이 다른' 칸은 오답이므로 자동 비우기
+    void _clearWrongSameValInRow() {
+      for (int cc = 0; cc < 9; cc++) {
+        if (cc == c) continue;
+        if (!fixed[r][cc] && grid[r][cc] == val && solution[r][cc] != val) {
+          grid[r][cc] = 0;
+          notes[r][cc].clear();
+          cleared++;
+        }
+      }
+    }
+    void _clearWrongSameValInCol() {
+      for (int rr = 0; rr < 9; rr++) {
+        if (rr == r) continue;
+        if (!fixed[rr][c] && grid[rr][c] == val && solution[rr][c] != val) {
+          grid[rr][c] = 0;
+          notes[rr][c].clear();
+          cleared++;
+        }
+      }
+    }
+    void _clearWrongSameValInBox() {
+      final br = (r ~/ 3) * 3, bc = (c ~/ 3) * 3;
+      for (int rr = br; rr < br + 3; rr++) {
+        for (int cc = bc; cc < bc + 3; cc++) {
+          if (rr == r && cc == c) continue;
+          if (!fixed[rr][cc] && grid[rr][cc] == val && solution[rr][cc] != val) {
+            grid[rr][cc] = 0;
+            notes[rr][cc].clear();
+            cleared++;
+          }
+        }
+      }
+    }
+
+    _clearWrongSameValInRow();
+    _clearWrongSameValInCol();
+    _clearWrongSameValInBox();
+
+    // 힌트 적용(선택 칸 정답 + 메모 제거)
+    grid[r][c] = val;
+    notes[r][c].clear();
+    notifyListeners();
+    return cleared;
   }
 
   /// 전체 보드가 정답과 동일한지
@@ -303,7 +438,6 @@ class _LandingPageState extends State<LandingPage> {
                     mainAxisAlignment: MainAxisAlignment.center,
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      // 원형 아이콘으로 쓰고 싶으면 CircleAvatar로 바꿔도 됨 (아래 옵션 참고)
                       Image.asset(
                         'assets/suji_kong.png',
                         width: 120,
@@ -320,7 +454,7 @@ class _LandingPageState extends State<LandingPage> {
                       ),
                     ],
                   ),
-                  
+
                   const SizedBox(height: 32),
 
                   // 난이도 선택
@@ -600,7 +734,9 @@ class _KeypadRow extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.only(bottom: 6),
               child: Text(
-                app.noteMode ? '메모 모드: 숫자 버튼이 메모를 토글합니다.' : '일반 모드: 숫자 버튼이 값을 입력합니다.',
+                app.noteMode
+                    ? '메모 모드: 숫자 버튼이 메모를 토글합니다.'
+                    : '일반 모드: 숫자 버튼이 값을 입력합니다.',
                 style: Theme.of(context).textTheme.bodySmall,
               ),
             ),
@@ -634,13 +770,38 @@ class _KeypadRow extends StatelessWidget {
                 Expanded(
                   child: OutlinedButton.icon(
                     onPressed: () {
-                      if (app.selR == null) {
+                      final state = context.read<MyAppState>();
+                      final r = state.selR, c = state.selC;
+                      if (r == null || c == null) {
                         ScaffoldMessenger.of(context).showSnackBar(
                           const SnackBar(content: Text('힌트를 쓰려면 먼저 빈 칸을 선택하세요.')),
                         );
                         return;
                       }
-                      app.hintOne();
+                      if (state.fixed[r][c]) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('고정값은 변경할 수 없습니다.')),
+                        );
+                        return;
+                      }
+                      if (state.grid[r][c] == state.solution[r][c]) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('이미 정답이 들어간 칸입니다.')),
+                        );
+                        return;
+                      }
+                      try {
+                        final cleared = state.hintOneSafe();
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text(cleared > 0
+                              ? '힌트 적용! 중복 오답 $cleared칸 정리 후 채웠어요.'
+                              : '힌트 적용! 정답을 채웠어요.')),
+                        );
+                      } catch (e) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text(e.toString())),
+                        );
+                      }
                     },
                     icon: const Icon(Icons.lightbulb_outline),
                     label: const Text('힌트'),
