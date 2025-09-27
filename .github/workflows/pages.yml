@@ -2,8 +2,8 @@ name: Deploy Flutter Web to GitHub Pages
 
 on:
   push:
-    branches: [ main, master ]   # 기본 브랜치가 main이면 그대로 OK
-  workflow_dispatch:              # Actions에서 수동 실행도 가능
+    branches: [ main, master ]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -14,20 +14,30 @@ concurrency:
   group: pages
   cancel-in-progress: true
 
+env:
+  PROJECT_DIR: .
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: stable
+          flutter-version: '3.22.2'   # ✅ 버전 고정
+          channel: 'stable'
+          cache: true
+
+      - run: flutter --version
       - run: flutter config --enable-web
       - run: flutter pub get
+        working-directory: ${{ env.PROJECT_DIR }}
       - run: flutter build web --release --web-renderer html --base-href /sudoku_suji/ --pwa-strategy none
+        working-directory: ${{ env.PROJECT_DIR }}
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: build/web
+          path: ${{ env.PROJECT_DIR }}/build/web
 
   deploy:
     needs: build
