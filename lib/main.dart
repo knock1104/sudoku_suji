@@ -248,7 +248,7 @@ class MyApp extends StatelessWidget {
     return ChangeNotifierProvider(
       create: (_) => MyAppState(),
       child: MaterialApp(
-        title: '송수지\n스도쿠천재',
+        title: '송수지 스도쿠천재',
         theme: ThemeData(
           useMaterial3: true,
           colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepOrange),
@@ -313,7 +313,7 @@ class _LandingPageState extends State<LandingPage> {
                       const SizedBox(width: 10),
                       Flexible(
                         child: Text(
-                          '송수지 스도쿠천재',
+                          '송수지\n스도쿠천재',
                           style: titleStyle,
                           overflow: TextOverflow.ellipsis,
                         ),
