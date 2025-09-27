@@ -29,3 +29,4 @@ flutter:
   assets:
     - assets/puzzles.json
     - assets/app_icon.png
+    - assets/suji_kong.png
