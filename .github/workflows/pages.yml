@@ -33,7 +33,7 @@ jobs:
       - run: flutter config --enable-web
       - run: flutter pub get
         working-directory: ${{ env.PROJECT_DIR }}
-      - run: flutter build web --release --web-renderer html --base-href /sudoku_suji/ --pwa-strategy none
+      - run: flutter build web --release --web-renderer html --base-href / --pwa-strategy none
         working-directory: ${{ env.PROJECT_DIR }}
       - uses: actions/upload-pages-artifact@v3
         with:
