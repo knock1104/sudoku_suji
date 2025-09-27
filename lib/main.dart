@@ -248,7 +248,7 @@ class MyApp extends StatelessWidget {
     return ChangeNotifierProvider(
       create: (_) => MyAppState(),
       child: MaterialApp(
-        title: '송수지 스도쿠천재',
+        title: '송수지\n 스도쿠천재',
         theme: ThemeData(
           useMaterial3: true,
           colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepOrange),
