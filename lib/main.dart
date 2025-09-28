@@ -41,7 +41,7 @@ class SudokuRepo {
     _cache = json.decode(raw) as Map<String, dynamic>;
   }
 
-  /// difficulty: "상"|"중"|"하"  (UI의 수지/원석/콩이는 매핑해서 넘김)
+  /// difficulty: "상"|"중"|"하"
   static Future<SudokuPuzzle> load(String difficulty, int number) async {
     await _ensureLoaded();
     final d = _cache![difficulty] as Map<String, dynamic>?;
@@ -59,6 +59,9 @@ class MyAppState extends ChangeNotifier {
   // 표시용 난이도 라벨
   String uiDifficulty = '콩이(쉬움)';
   int number = 1;
+
+  // 챌린지 모드 여부
+  bool challengeMode = false;
 
   // 로딩/에러
   bool loading = false;
@@ -83,6 +86,7 @@ class MyAppState extends ChangeNotifier {
     '콩이(쉬움)': '하',
     '원석(보통)': '중',
     '수지(어려움)': '상',
+    '챌린지(쉬움)': '하', // 퍼즐은 쉬움 세트 사용, 힌트만 비활성화
   };
 
   // ===== 퍼즐 로딩 =====
@@ -91,6 +95,10 @@ class MyAppState extends ChangeNotifier {
     error = null;
     if (uiDiff != null) uiDifficulty = uiDiff;
     if (num != null) number = num;
+
+    // 챌린지 모드 플래그
+    challengeMode = (uiDifficulty == '챌린지(쉬움)');
+
     notifyListeners();
 
     try {
@@ -104,7 +112,6 @@ class MyAppState extends ChangeNotifier {
       fixed = List.generate(9, (r) => List.generate(9, (c) => p.puzzle[r][c] != 0));
       solution = p.solution.map((r) => List<int>.from(r)).toList();
       selR = selC = null;
-      // 메모 초기화
       notes = List.generate(9, (_) => List.generate(9, (_) => <int>{}));
       noteMode = false;
     } catch (e) {
@@ -122,7 +129,8 @@ class MyAppState extends ChangeNotifier {
       for (int c = 0; c < 9; c++) {
         final g = p.puzzle[r][c];
         if (g != 0 && g != p.solution[r][c]) {
-          throw Exception('퍼즐(${uiDifficulty} / $number) 고정값이 해답과 다릅니다. (r=$r, c=$c)');
+          final rr = r + 1, cc = c + 1;
+          throw Exception('퍼즐(${uiDifficulty} / $number) 고정값이 해답과 다릅니다. (r=$rr, c=$cc)');
         }
       }
     }
@@ -131,20 +139,18 @@ class MyAppState extends ChangeNotifier {
       final seen = <int>{};
       for (final v in vals) {
         if (v == 0) continue;
-        if (seen.contains(v)) return true;
-        seen.add(v);
+        if (!seen.add(v)) return true;
       }
       return false;
     }
-
     for (int r = 0; r < 9; r++) {
       if (_dupInUnit(List.generate(9, (c) => p.puzzle[r][c]))) {
-        throw Exception('퍼즐 행 중복이 있습니다. (r=$r)');
+        throw Exception('퍼즐 행 중복이 있습니다. (r=${r + 1})');
       }
     }
     for (int c = 0; c < 9; c++) {
       if (_dupInUnit(List.generate(9, (r) => p.puzzle[r][c]))) {
-        throw Exception('퍼즐 열 중복이 있습니다. (c=$c)');
+        throw Exception('퍼즐 열 중복이 있습니다. (c=${c + 1})');
       }
     }
     for (int br = 0; br < 9; br += 3) {
@@ -156,7 +162,7 @@ class MyAppState extends ChangeNotifier {
           }
         }
         if (_dupInUnit(box)) {
-          throw Exception('퍼즐 박스 중복이 있습니다. (r=$br~${br+2}, c=$bc~${bc+2})');
+          throw Exception('퍼즐 박스 중복이 있습니다. (r=${br + 1}~${br + 3}, c=${bc + 1}~${bc + 3})');
         }
       }
     }
@@ -174,17 +180,14 @@ class MyAppState extends ChangeNotifier {
     if (fixed[r][c]) return;
 
     if (noteMode) {
-      // 메모 토글
-      if (grid[r][c] != 0) return; // 값이 들어있으면 메모 안 받음
+      if (grid[r][c] != 0) return; // 값이 있으면 메모 금지
       if (notes[r][c].contains(n)) {
         notes[r][c].remove(n);
       } else {
         notes[r][c].add(n);
       }
     } else {
-      // 실제 숫자 입력
       grid[r][c] = n;
-      // 해당 칸 메모는 비우기
       notes[r][c].clear();
     }
     notifyListeners();
@@ -196,10 +199,8 @@ class MyAppState extends ChangeNotifier {
     if (fixed[r][c]) return;
 
     if (noteMode) {
-      // 메모 모드에서 X: 선택 칸 메모 모두 지우기
       notes[r][c].clear();
     } else {
-      // 일반 모드에서 X: 값 지우기
       grid[r][c] = 0;
     }
     notifyListeners();
@@ -207,6 +208,7 @@ class MyAppState extends ChangeNotifier {
 
   /// 기존: 현재 선택 칸에 정답 1칸 채우기 (단순)
   void hintOne() {
+    if (challengeMode) return; // 챌린지 모드: 힌트 없음
     if (selR == null || selC == null) return;
     final r = selR!, c = selC!;
     if (fixed[r][c]) return;
@@ -216,27 +218,23 @@ class MyAppState extends ChangeNotifier {
   }
 
   /// 개선: 중복 오답을 자동 정리하고 정답 채우기
-  /// 반환값: 힌트 적용 전 제거된 오답 칸 수
   int hintOneSafe() {
+    if (challengeMode) return 0; // 챌린지 모드: 힌트 없음
     if (selR == null || selC == null) return 0;
     final r = selR!, c = selC!;
     if (fixed[r][c]) return 0;
 
     final val = solution[r][c];
 
-    // 퍼즐 고정값과 충돌하는 정답이면 데이터 오류이므로 막기
     bool _conflictWithFixed() {
-      // 행
       for (int cc = 0; cc < 9; cc++) {
         if (cc == c) continue;
         if (fixed[r][cc] && grid[r][cc] == val) return true;
       }
-      // 열
       for (int rr = 0; rr < 9; rr++) {
         if (rr == r) continue;
         if (fixed[rr][c] && grid[rr][c] == val) return true;
       }
-      // 박스
       final br = (r ~/ 3) * 3, bc = (c ~/ 3) * 3;
       for (int rr = br; rr < br + 3; rr++) {
         for (int cc = bc; cc < bc + 3; cc++) {
@@ -253,7 +251,6 @@ class MyAppState extends ChangeNotifier {
 
     int cleared = 0;
 
-    // 같은 숫자가 들어 있으나 '해답이 다른' 칸은 오답이므로 자동 비우기
     void _clearWrongSameValInRow() {
       for (int cc = 0; cc < 9; cc++) {
         if (cc == c) continue;
@@ -264,6 +261,7 @@ class MyAppState extends ChangeNotifier {
         }
       }
     }
+
     void _clearWrongSameValInCol() {
       for (int rr = 0; rr < 9; rr++) {
         if (rr == r) continue;
@@ -274,6 +272,7 @@ class MyAppState extends ChangeNotifier {
         }
       }
     }
+
     void _clearWrongSameValInBox() {
       final br = (r ~/ 3) * 3, bc = (c ~/ 3) * 3;
       for (int rr = br; rr < br + 3; rr++) {
@@ -292,14 +291,12 @@ class MyAppState extends ChangeNotifier {
     _clearWrongSameValInCol();
     _clearWrongSameValInBox();
 
-    // 힌트 적용(선택 칸 정답 + 메모 제거)
     grid[r][c] = val;
     notes[r][c].clear();
     notifyListeners();
     return cleared;
   }
 
-  /// 전체 보드가 정답과 동일한지
   bool isSolved() {
     for (int r = 0; r < 9; r++) {
       for (int c = 0; c < 9; c++) {
@@ -330,7 +327,8 @@ class MyAppState extends ChangeNotifier {
       'noteMode': noteMode,
       'notes': notes
           .map((row) => row.map((s) => s.toList()..sort()).toList())
-          .toList(), // Set<int> -> List<int>
+          .toList(),
+      'challengeMode': challengeMode,
     };
     await prefs.setString(_saveKey, json.encode(data));
   }
@@ -365,11 +363,42 @@ class MyAppState extends ChangeNotifier {
           (c) => <int>{...(List<int>.from(_notes[r][c] as List))},
         ),
       );
+
+      challengeMode = m['challengeMode'] as bool? ?? false;
+
       notifyListeners();
       return true;
     } catch (_) {
       return false;
     }
+  }
+
+  // ===== 챌린지 랭킹 =====
+  static const _challengeKey = 'challenge_leaderboard_v1';
+
+  Future<List<Map<String, String>>> loadChallengeLeaderboard() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_challengeKey);
+    if (raw == null) return [];
+    final List<dynamic> arr = json.decode(raw);
+    return arr.map<Map<String, String>>((e) => {
+      'name': e['name'] as String,
+      'time': e['time'] as String,
+    }).toList();
+  }
+
+  Future<void> addChallengeRecord(String name, DateTime when) async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_challengeKey);
+    List<dynamic> arr = raw == null ? [] : json.decode(raw);
+    final t = _fmtTimestamp(when);
+    arr.insert(0, {'name': name, 'time': t}); // 최신이 위로
+    await prefs.setString(_challengeKey, json.encode(arr));
+  }
+
+  static String _fmtTimestamp(DateTime dt) {
+    String two(int n) => n.toString().padLeft(2, '0');
+    return '${dt.year}-${two(dt.month)}-${two(dt.day)}-${two(dt.hour)}:${two(dt.minute)}';
   }
 }
 
@@ -405,7 +434,7 @@ class LandingPage extends StatefulWidget {
 }
 
 class _LandingPageState extends State<LandingPage> {
-  final List<String> diffs = const ['콩이(쉬움)', '원석(보통)', '수지(어려움)'];
+  final List<String> diffs = const ['콩이(쉬움)', '원석(보통)', '수지(어려움)', '챌린지(쉬움)'];
   String selected = '콩이(쉬움)';
   final TextEditingController numCtl = TextEditingController(text: '1');
 
@@ -526,9 +555,22 @@ class _LandingPageState extends State<LandingPage> {
                   ),
                   const SizedBox(height: 12),
 
-                  // (선택) 이전 저장 불러오기 단축버튼
+                  // (선택) 이전 저장 불러오기 단축버튼 - 확인창 추가
                   OutlinedButton.icon(
                     onPressed: () async {
+                      final confirm = await showDialog<bool>(
+                        context: context,
+                        builder: (_) => AlertDialog(
+                          title: const Text('불러오기'),
+                          content: const Text('저장된 진행으로 이동하시겠습니까?'),
+                          actions: [
+                            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('아니오')),
+                            FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('예')),
+                          ],
+                        ),
+                      );
+                      if (confirm != true) return;
+
                       final ok = await context.read<MyAppState>().loadProgress();
                       if (!mounted) return;
                       if (ok) {
@@ -543,6 +585,19 @@ class _LandingPageState extends State<LandingPage> {
                     },
                     icon: const Icon(Icons.history),
                     label: const Text('이어서 하기(불러오기)'),
+                  ),
+
+                  const SizedBox(height: 8),
+
+                  // 챌린지 랭킹 보기
+                  OutlinedButton.icon(
+                    onPressed: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(builder: (_) => const ChallengeRankingPage()),
+                      );
+                    },
+                    icon: const Icon(Icons.emoji_events_outlined),
+                    label: const Text('챌린지 랭킹'),
                   ),
                 ],
               ),
@@ -587,11 +642,24 @@ class GamePage extends StatelessWidget {
               }
             },
           ),
-          // 불러오기
+          // 불러오기 (바로 불러오되 페이지 내에서 토스트만)
           IconButton(
             tooltip: '불러오기',
             icon: const Icon(Icons.restore_outlined),
             onPressed: () async {
+              final confirm = await showDialog<bool>(
+                context: context,
+                builder: (_) => AlertDialog(
+                  title: const Text('불러오기'),
+                  content: const Text('저장된 진행으로 이동하시겠습니까?'),
+                  actions: [
+                    TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('아니오')),
+                    FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('예')),
+                  ],
+                ),
+              );
+              if (confirm != true) return;
+
               final ok = await context.read<MyAppState>().loadProgress();
               if (!context.mounted) return;
               ScaffoldMessenger.of(context).showSnackBar(
@@ -628,7 +696,7 @@ class GamePage extends StatelessWidget {
 }
 
 /* =========================
-   보드 위젯
+   보드 위젯 (메모 폰트 자동 축소)
 ========================= */
 class _Board extends StatelessWidget {
   const _Board({super.key});
@@ -646,12 +714,19 @@ class _Board extends StatelessWidget {
     );
   }
 
-  Widget _notesGrid(Set<int> notes, TextStyle baseStyle) {
-    // 3x3 작은 숫자 그리드
-    final style = baseStyle.copyWith(fontSize: 10);
+  Widget _notesGrid(Set<int> notes, TextStyle baseStyle, double noteFontSize) {
+    final style = baseStyle.copyWith(fontSize: noteFontSize, height: 1.0);
     final cells = List.generate(9, (i) {
       final n = i + 1;
-      return Center(child: Text(notes.contains(n) ? '$n' : '', style: style));
+      return Center(
+        child: Text(
+          notes.contains(n) ? '$n' : '',
+          style: style,
+          textAlign: TextAlign.center,
+          maxLines: 1,
+          softWrap: false,
+        ),
+      );
     });
 
     return Table(
@@ -673,39 +748,61 @@ class _Board extends StatelessWidget {
 
     return Container(
       color: theme.colorScheme.surfaceVariant.withOpacity(0.2),
-      child: GridView.builder(
-        physics: const NeverScrollableScrollPhysics(),
-        gridDelegate:
-            const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 9),
-        itemCount: 81,
-        itemBuilder: (context, i) {
-          final r = i ~/ 9;
-          final c = i % 9;
-          final v = app.grid[r][c];
-          final fixed = app.fixed[r][c];
-          final selected = (app.selR == r && app.selC == c);
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final boardSide = constraints.biggest.shortestSide;
+          final cellSize = boardSide / 9.0;
 
-          return InkWell(
-            onTap: () => app.selectCell(r, c),
-            child: Container(
-              padding: const EdgeInsets.all(2),
-              decoration: BoxDecoration(
-                color: selected ? selColor : Colors.transparent,
-                border: _cellBorder(r, c, borderColor),
-              ),
-              child: Center(
-                child: v == 0
-                    ? _notesGrid(app.notes[r][c], Theme.of(context).textTheme.bodyMedium!)
-                    : Text(
-                        '$v',
-                        style: TextStyle(
-                          fontSize: 20,
-                          fontWeight: fixed ? FontWeight.w700 : FontWeight.w400,
-                          color: theme.colorScheme.onSurface,
-                        ),
-                      ),
-              ),
+          // 동적 폰트
+          double noteFontSize = (cellSize / 3.0) * 0.42; // 약 칸의 14%
+          noteFontSize = noteFontSize.clamp(6.0, 12.0);
+
+          double mainFontSize = (cellSize * 0.48).clamp(16.0, 24.0);
+          final cellPadding = cellSize < 36 ? 1.0 : 2.0;
+
+          return GridView.builder(
+            physics: const NeverScrollableScrollPhysics(),
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 9,
             ),
+            itemCount: 81,
+            itemBuilder: (context, i) {
+              final r = i ~/ 9;
+              final c = i % 9;
+              final v = app.grid[r][c];
+              final fixed = app.fixed[r][c];
+              final selected = (app.selR == r && app.selC == c);
+
+              return InkWell(
+                onTap: () => app.selectCell(r, c),
+                child: Container(
+                  padding: EdgeInsets.all(cellPadding),
+                  decoration: BoxDecoration(
+                    color: selected ? selColor : Colors.transparent,
+                    border: _cellBorder(r, c, borderColor),
+                  ),
+                  child: Center(
+                    child: v == 0
+                        ? _notesGrid(
+                            app.notes[r][c],
+                            Theme.of(context).textTheme.bodyMedium!,
+                            noteFontSize,
+                          )
+                        : Text(
+                            '$v',
+                            style: TextStyle(
+                              fontSize: mainFontSize,
+                              fontWeight: fixed ? FontWeight.w700 : FontWeight.w400,
+                              color: theme.colorScheme.onSurface,
+                              height: 1.0,
+                            ),
+                            textAlign: TextAlign.center,
+                            maxLines: 1,
+                          ),
+                  ),
+                ),
+              );
+            },
           );
         },
       ),
@@ -769,40 +866,42 @@ class _KeypadRow extends StatelessWidget {
               children: [
                 Expanded(
                   child: OutlinedButton.icon(
-                    onPressed: () {
-                      final state = context.read<MyAppState>();
-                      final r = state.selR, c = state.selC;
-                      if (r == null || c == null) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('힌트를 쓰려면 먼저 빈 칸을 선택하세요.')),
-                        );
-                        return;
-                      }
-                      if (state.fixed[r][c]) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('고정값은 변경할 수 없습니다.')),
-                        );
-                        return;
-                      }
-                      if (state.grid[r][c] == state.solution[r][c]) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('이미 정답이 들어간 칸입니다.')),
-                        );
-                        return;
-                      }
-                      try {
-                        final cleared = state.hintOneSafe();
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text(cleared > 0
-                              ? '힌트 적용! 중복 오답 $cleared칸 정리 후 채웠어요.'
-                              : '힌트 적용! 정답을 채웠어요.')),
-                        );
-                      } catch (e) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text(e.toString())),
-                        );
-                      }
-                    },
+                    onPressed: app.challengeMode
+                        ? null // 챌린지 모드: 힌트 비활성화
+                        : () {
+                            final state = context.read<MyAppState>();
+                            final r = state.selR, c = state.selC;
+                            if (r == null || c == null) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('힌트를 쓰려면 먼저 빈 칸을 선택하세요.')),
+                              );
+                              return;
+                            }
+                            if (state.fixed[r][c]) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('고정값은 변경할 수 없습니다.')),
+                              );
+                              return;
+                            }
+                            if (state.grid[r][c] == state.solution[r][c]) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('이미 정답이 들어간 칸입니다.')),
+                              );
+                              return;
+                            }
+                            try {
+                              final cleared = state.hintOneSafe();
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text(cleared > 0
+                                    ? '힌트 적용! 중복 오답 $cleared칸 정리 후 채웠어요.'
+                                    : '힌트 적용! 정답을 채웠어요.')),
+                              );
+                            } catch (e) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text(e.toString())),
+                              );
+                            }
+                          },
                     icon: const Icon(Icons.lightbulb_outline),
                     label: const Text('힌트'),
                   ),
@@ -812,6 +911,52 @@ class _KeypadRow extends StatelessWidget {
                   child: ElevatedButton.icon(
                     onPressed: () async {
                       if (app.isSolved()) {
+                        // 챌린지 모드: 이름 입력 후 랭킹 저장
+                        if (app.challengeMode) {
+                          final nameCtl = TextEditingController();
+                          final ok = await showDialog<bool>(
+                            context: context,
+                            builder: (_) => AlertDialog(
+                              title: const Text('챌린지 성공!'),
+                              content: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text('이름을 남길 수 있어요.'),
+                                  const SizedBox(height: 8),
+                                  TextField(
+                                    controller: nameCtl,
+                                    decoration: const InputDecoration(
+                                      hintText: '이름을 입력하세요',
+                                      isDense: true,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              actions: [
+                                TextButton(
+                                  onPressed: () => Navigator.pop(context, false),
+                                  child: const Text('건너뛰기'),
+                                ),
+                                FilledButton(
+                                  onPressed: () => Navigator.pop(context, true),
+                                  child: const Text('확인'),
+                                ),
+                              ],
+                            ),
+                          );
+
+                          if (ok == true && nameCtl.text.trim().isNotEmpty) {
+                            await context.read<MyAppState>()
+                                .addChallengeRecord(nameCtl.text.trim(), DateTime.now());
+                            if (context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('챌린지 랭킹에 등록했어요!')),
+                              );
+                            }
+                          }
+                        }
+
                         await showDialog<void>(
                           context: context,
                           builder: (_) => AlertDialog(
@@ -843,6 +988,62 @@ class _KeypadRow extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/* =========================
+   챌린지 랭킹 페이지
+========================= */
+class ChallengeRankingPage extends StatefulWidget {
+  const ChallengeRankingPage({super.key});
+
+  @override
+  State<ChallengeRankingPage> createState() => _ChallengeRankingPageState();
+}
+
+class _ChallengeRankingPageState extends State<ChallengeRankingPage> {
+  List<Map<String, String>> _items = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final items = await context.read<MyAppState>().loadChallengeLeaderboard();
+    setState(() => _items = items);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('챌린지 랭킹'),
+        actions: [
+          IconButton(
+            tooltip: '새로고침',
+            onPressed: _load,
+            icon: const Icon(Icons.refresh),
+          ),
+        ],
+      ),
+      body: _items.isEmpty
+          ? const Center(child: Text('아직 등록된 기록이 없습니다.'))
+          : ListView.separated(
+              padding: const EdgeInsets.all(16),
+              itemBuilder: (_, i) {
+                final e = _items[i];
+                return ListTile(
+                  leading: CircleAvatar(child: Text('${i + 1}')),
+                  title: Text(e['name'] ?? ''),
+                  subtitle: Text(e['time'] ?? ''),
+                );
+              },
+              separatorBuilder: (_, __) => const Divider(height: 1),
+              itemCount: _items.length,
+            ),
     );
   }
 }
