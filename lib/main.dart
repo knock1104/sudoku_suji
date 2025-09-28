@@ -709,8 +709,8 @@ class _Board extends StatelessWidget {
           final cellSize = boardSide / 9.0;
 
           // 메모/메인 숫자 폰트 동적 조정
-          double noteFontSize = (cellSize / 3.0) * 0.42; // 약 칸의 14%
-          noteFontSize = noteFontSize.clamp(6.0, 12.0);
+          double noteFontSize = (cellSize / 3.0) * 0.63; // 약 칸의 14%
+          noteFontSize = noteFontSize.clamp(9.0, 18.0);
           double mainFontSize = (cellSize * 0.48).clamp(16.0, 24.0);
           final cellPadding = cellSize < 36 ? 1.0 : 2.0;
 
