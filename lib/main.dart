@@ -14,15 +14,13 @@ void main() {
 class SudokuPuzzle {
   final List<List<int>> puzzle;   // 0 = 빈칸
   final List<List<int>> solution; // 정답
-
   SudokuPuzzle({required this.puzzle, required this.solution});
 
   static List<List<int>> _parse81(String s) {
     assert(s.length == 81, '퍼즐/해답 문자열은 81글자여야 합니다.');
     final g = List.generate(9, (_) => List.filled(9, 0));
     for (int i = 0; i < 81; i++) {
-      final r = i ~/ 9;
-      final c = i % 9;
+      final r = i ~/ 9, c = i % 9;
       g[r][c] = int.tryParse(s[i]) ?? 0;
     }
     return g;
@@ -41,12 +39,34 @@ class SudokuRepo {
     _cache = json.decode(raw) as Map<String, dynamic>;
   }
 
-  /// difficulty: "상"|"중"|"하"
+  /// 필요 시 강제로 다시 읽기 (핫리로드 후 신규 JSON 반영용)
+  static Future<void> reload() async {
+    final raw = await rootBundle.loadString('assets/puzzles.json');
+    _cache = json.decode(raw) as Map<String, dynamic>;
+  }
+
+  /// difficulty: "상"|"중"|"하"|"챌린지"
   static Future<SudokuPuzzle> load(String difficulty, int number) async {
     await _ensureLoaded();
-    final d = _cache![difficulty] as Map<String, dynamic>?;
+    final d = _cache![difficulty];
     if (d == null) throw Exception('난이도($difficulty)를 찾을 수 없어요.');
-    final item = d['$number'] as Map<String, dynamic>?;
+
+    // 챌린지: 단일 오브젝트(권장) 또는 {"1": {...}} 둘 다 지원
+    if (difficulty == '챌린지') {
+      if (d is Map && d.containsKey('puzzle')) {
+        return SudokuPuzzle.fromStrings(d['puzzle'] as String, d['solution'] as String);
+      } else if (d is Map) {
+        final item = d['1'] as Map<String, dynamic>?;
+        if (item == null) throw Exception('챌린지 퍼즐이 없어요.');
+        return SudokuPuzzle.fromStrings(item['puzzle'] as String, item['solution'] as String);
+      } else {
+        throw Exception('챌린지 퍼즐 형식이 올바르지 않아요.');
+      }
+    }
+
+    final dm = d as Map<String, dynamic>?;
+    if (dm == null) throw Exception('난이도 데이터가 손상됐어요.');
+    final item = dm['$number'] as Map<String, dynamic>?;
     if (item == null) throw Exception('번호($number) 퍼즐이 없어요.');
     return SudokuPuzzle.fromStrings(item['puzzle'] as String, item['solution'] as String);
   }
@@ -59,9 +79,6 @@ class MyAppState extends ChangeNotifier {
   // 표시용 난이도 라벨
   String uiDifficulty = '콩이(쉬움)';
   int number = 1;
-
-  // 챌린지 모드 여부
-  bool challengeMode = false;
 
   // 로딩/에러
   bool loading = false;
@@ -81,12 +98,15 @@ class MyAppState extends ChangeNotifier {
     (_) => List.generate(9, (_) => <int>{}),
   );
 
+  // 챌린지 여부 편의 getter
+  bool get challengeMode => uiDifficulty == '챌린지';
+
   // UI 난이도 → JSON 키 매핑
   static const Map<String, String> difficultyMap = {
     '콩이(쉬움)': '하',
     '원석(보통)': '중',
     '수지(어려움)': '상',
-    '챌린지(쉬움)': '하', // 퍼즐은 쉬움 세트 사용, 힌트만 비활성화
+    '챌린지': '챌린지',
   };
 
   // ===== 퍼즐 로딩 =====
@@ -95,15 +115,12 @@ class MyAppState extends ChangeNotifier {
     error = null;
     if (uiDiff != null) uiDifficulty = uiDiff;
     if (num != null) number = num;
-
-    // 챌린지 모드 플래그
-    challengeMode = (uiDifficulty == '챌린지(쉬움)');
-
     notifyListeners();
 
     try {
       final key = difficultyMap[uiDifficulty]!;
-      final p = await SudokuRepo.load(key, number);
+      // 챌린지는 번호 고정(1), 그 외는 number 사용
+      final p = await SudokuRepo.load(key, challengeMode ? 1 : number);
 
       // 퍼즐 데이터 검증 (고정값-해답 일치 & 행/열/박스 중복 금지)
       _validatePuzzle(p);
@@ -112,6 +129,7 @@ class MyAppState extends ChangeNotifier {
       fixed = List.generate(9, (r) => List.generate(9, (c) => p.puzzle[r][c] != 0));
       solution = p.solution.map((r) => List<int>.from(r)).toList();
       selR = selC = null;
+      // 메모 초기화
       notes = List.generate(9, (_) => List.generate(9, (_) => <int>{}));
       noteMode = false;
     } catch (e) {
@@ -129,8 +147,7 @@ class MyAppState extends ChangeNotifier {
       for (int c = 0; c < 9; c++) {
         final g = p.puzzle[r][c];
         if (g != 0 && g != p.solution[r][c]) {
-          final rr = r + 1, cc = c + 1;
-          throw Exception('퍼즐(${uiDifficulty} / $number) 고정값이 해답과 다릅니다. (r=$rr, c=$cc)');
+          throw Exception('퍼즐(${uiDifficulty} / $number) 고정값이 해답과 다릅니다. (r=${r + 1}, c=${c + 1})');
         }
       }
     }
@@ -197,7 +214,6 @@ class MyAppState extends ChangeNotifier {
     if (selR == null || selC == null) return;
     final r = selR!, c = selC!;
     if (fixed[r][c]) return;
-
     if (noteMode) {
       notes[r][c].clear();
     } else {
@@ -206,9 +222,9 @@ class MyAppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 기존: 현재 선택 칸에 정답 1칸 채우기 (단순)
+  /// 힌트(챌린지 비활성)
   void hintOne() {
-    if (challengeMode) return; // 챌린지 모드: 힌트 없음
+    if (challengeMode) return;
     if (selR == null || selC == null) return;
     final r = selR!, c = selC!;
     if (fixed[r][c]) return;
@@ -217,86 +233,7 @@ class MyAppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 개선: 중복 오답을 자동 정리하고 정답 채우기
-  int hintOneSafe() {
-    if (challengeMode) return 0; // 챌린지 모드: 힌트 없음
-    if (selR == null || selC == null) return 0;
-    final r = selR!, c = selC!;
-    if (fixed[r][c]) return 0;
-
-    final val = solution[r][c];
-
-    bool _conflictWithFixed() {
-      for (int cc = 0; cc < 9; cc++) {
-        if (cc == c) continue;
-        if (fixed[r][cc] && grid[r][cc] == val) return true;
-      }
-      for (int rr = 0; rr < 9; rr++) {
-        if (rr == r) continue;
-        if (fixed[rr][c] && grid[rr][c] == val) return true;
-      }
-      final br = (r ~/ 3) * 3, bc = (c ~/ 3) * 3;
-      for (int rr = br; rr < br + 3; rr++) {
-        for (int cc = bc; cc < bc + 3; cc++) {
-          if (rr == r && cc == c) continue;
-          if (fixed[rr][cc] && grid[rr][cc] == val) return true;
-        }
-      }
-      return false;
-    }
-
-    if (_conflictWithFixed()) {
-      throw Exception('퍼즐 데이터 오류: 힌트 값이 고정값과 충돌합니다.');
-    }
-
-    int cleared = 0;
-
-    void _clearWrongSameValInRow() {
-      for (int cc = 0; cc < 9; cc++) {
-        if (cc == c) continue;
-        if (!fixed[r][cc] && grid[r][cc] == val && solution[r][cc] != val) {
-          grid[r][cc] = 0;
-          notes[r][cc].clear();
-          cleared++;
-        }
-      }
-    }
-
-    void _clearWrongSameValInCol() {
-      for (int rr = 0; rr < 9; rr++) {
-        if (rr == r) continue;
-        if (!fixed[rr][c] && grid[rr][c] == val && solution[rr][c] != val) {
-          grid[rr][c] = 0;
-          notes[rr][c].clear();
-          cleared++;
-        }
-      }
-    }
-
-    void _clearWrongSameValInBox() {
-      final br = (r ~/ 3) * 3, bc = (c ~/ 3) * 3;
-      for (int rr = br; rr < br + 3; rr++) {
-        for (int cc = bc; cc < bc + 3; cc++) {
-          if (rr == r && cc == c) continue;
-          if (!fixed[rr][cc] && grid[rr][cc] == val && solution[rr][cc] != val) {
-            grid[rr][cc] = 0;
-            notes[rr][cc].clear();
-            cleared++;
-          }
-        }
-      }
-    }
-
-    _clearWrongSameValInRow();
-    _clearWrongSameValInCol();
-    _clearWrongSameValInBox();
-
-    grid[r][c] = val;
-    notes[r][c].clear();
-    notifyListeners();
-    return cleared;
-  }
-
+  /// 전체 보드가 정답과 동일한지
   bool isSolved() {
     for (int r = 0; r < 9; r++) {
       for (int c = 0; c < 9; c++) {
@@ -325,10 +262,7 @@ class MyAppState extends ChangeNotifier {
       'selR': selR,
       'selC': selC,
       'noteMode': noteMode,
-      'notes': notes
-          .map((row) => row.map((s) => s.toList()..sort()).toList())
-          .toList(),
-      'challengeMode': challengeMode,
+      'notes': notes.map((row) => row.map((s) => s.toList()..sort()).toList()).toList(),
     };
     await prefs.setString(_saveKey, json.encode(data));
   }
@@ -363,9 +297,6 @@ class MyAppState extends ChangeNotifier {
           (c) => <int>{...(List<int>.from(_notes[r][c] as List))},
         ),
       );
-
-      challengeMode = m['challengeMode'] as bool? ?? false;
-
       notifyListeners();
       return true;
     } catch (_) {
@@ -376,15 +307,43 @@ class MyAppState extends ChangeNotifier {
   // ===== 챌린지 랭킹 =====
   static const _challengeKey = 'challenge_leaderboard_v1';
 
+  static String _fmtTimestamp(DateTime dt) {
+    String two(int n) => n.toString().padLeft(2, '0');
+    return '${dt.year}-${two(dt.month)}-${two(dt.day)}-${two(dt.hour)}:${two(dt.minute)}';
+  }
+
+  static DateTime? _parseTimestamp(String s) {
+    final m = RegExp(r'^(\d{4})-(\d{2})-(\d{2})-(\d{2}):(\d{2})$').firstMatch(s);
+    if (m == null) return null;
+    final y = int.parse(m.group(1)!);
+    final mo = int.parse(m.group(2)!);
+    final d = int.parse(m.group(3)!);
+    final h = int.parse(m.group(4)!);
+    final mi = int.parse(m.group(5)!);
+    return DateTime(y, mo, d, h, mi);
+    }
+
   Future<List<Map<String, String>>> loadChallengeLeaderboard() async {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString(_challengeKey);
     if (raw == null) return [];
     final List<dynamic> arr = json.decode(raw);
-    return arr.map<Map<String, String>>((e) => {
+    final list = arr.map<Map<String, String>>((e) => {
       'name': e['name'] as String,
       'time': e['time'] as String,
     }).toList();
+
+    // 최신순 정렬
+    list.sort((a, b) {
+      final ta = _parseTimestamp(a['time'] ?? '');
+      final tb = _parseTimestamp(b['time'] ?? '');
+      if (ta == null && tb == null) return 0;
+      if (ta == null) return 1;
+      if (tb == null) return -1;
+      return tb.compareTo(ta);
+    });
+
+    return list;
   }
 
   Future<void> addChallengeRecord(String name, DateTime when) async {
@@ -392,13 +351,8 @@ class MyAppState extends ChangeNotifier {
     final raw = prefs.getString(_challengeKey);
     List<dynamic> arr = raw == null ? [] : json.decode(raw);
     final t = _fmtTimestamp(when);
-    arr.insert(0, {'name': name, 'time': t}); // 최신이 위로
+    arr.insert(0, {'name': name, 'time': t});
     await prefs.setString(_challengeKey, json.encode(arr));
-  }
-
-  static String _fmtTimestamp(DateTime dt) {
-    String two(int n) => n.toString().padLeft(2, '0');
-    return '${dt.year}-${two(dt.month)}-${two(dt.day)}-${two(dt.hour)}:${two(dt.minute)}';
   }
 }
 
@@ -434,7 +388,7 @@ class LandingPage extends StatefulWidget {
 }
 
 class _LandingPageState extends State<LandingPage> {
-  final List<String> diffs = const ['콩이(쉬움)', '원석(보통)', '수지(어려움)', '챌린지(쉬움)'];
+  final List<String> diffs = const ['콩이(쉬움)', '원석(보통)', '수지(어려움)', '챌린지'];
   String selected = '콩이(쉬움)';
   final TextEditingController numCtl = TextEditingController(text: '1');
 
@@ -500,25 +454,26 @@ class _LandingPageState extends State<LandingPage> {
                   ),
                   const SizedBox(height: 16),
 
-                  // 번호 선택
-                  Row(
-                    children: [
-                      const Text('번호 선택 (1-999)'),
-                      const SizedBox(width: 12),
-                      SizedBox(
-                        width: 120,
-                        child: TextField(
-                          controller: numCtl,
-                          keyboardType: TextInputType.number,
-                          decoration: const InputDecoration(
-                            hintText: '예: 1',
-                            isDense: true,
+                  // 번호 선택(챌린지는 숨김)
+                  if (selected != '챌린지')
+                    Row(
+                      children: [
+                        const Text('번호 선택 (1-999)'),
+                        const SizedBox(width: 12),
+                        SizedBox(
+                          width: 120,
+                          child: TextField(
+                            controller: numCtl,
+                            keyboardType: TextInputType.number,
+                            decoration: const InputDecoration(
+                              hintText: '예: 1',
+                              isDense: true,
+                            ),
                           ),
                         ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 28),
+                      ],
+                    ),
+                  if (selected != '챌린지') const SizedBox(height: 28) else const SizedBox(height: 8),
 
                   // 입장하기
                   SizedBox(
@@ -528,14 +483,14 @@ class _LandingPageState extends State<LandingPage> {
                       onPressed: app.loading
                           ? null
                           : () async {
-                              final n = int.tryParse(numCtl.text);
-                              if (n == null || n < 1 || n > 999) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(content: Text('번호는 1~999 사이의 정수로 입력하세요.')),
-                                );
-                                return;
-                              }
-                              await context.read<MyAppState>().loadPuzzle(uiDiff: selected, num: n);
+                              // JSON 변경을 즉시 반영하고 싶으면 리로드
+                              await SudokuRepo.reload();
+
+                              final n = int.tryParse(numCtl.text) ?? 1;
+                              await context.read<MyAppState>().loadPuzzle(
+                                    uiDiff: selected,
+                                    num: n,
+                                  );
                               if (!mounted) return;
                               if (app.error != null) {
                                 ScaffoldMessenger.of(context).showSnackBar(
@@ -555,7 +510,7 @@ class _LandingPageState extends State<LandingPage> {
                   ),
                   const SizedBox(height: 12),
 
-                  // (선택) 이전 저장 불러오기 단축버튼 - 확인창 추가
+                  // (선택) 이전 저장 불러오기 단축버튼 - 확인창
                   OutlinedButton.icon(
                     onPressed: () async {
                       final confirm = await showDialog<bool>(
@@ -621,7 +576,7 @@ class GamePage extends StatelessWidget {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text('${app.uiDifficulty} / ${app.number}'),
+        title: Text('${app.uiDifficulty}${app.challengeMode ? '' : ' / ${app.number}'}'),
         actions: [
           // 메모 모드
           IconButton(
@@ -642,7 +597,7 @@ class GamePage extends StatelessWidget {
               }
             },
           ),
-          // 불러오기 (바로 불러오되 페이지 내에서 토스트만)
+          // 불러오기
           IconButton(
             tooltip: '불러오기',
             icon: const Icon(Icons.restore_outlined),
@@ -714,8 +669,8 @@ class _Board extends StatelessWidget {
     );
   }
 
-  Widget _notesGrid(Set<int> notes, TextStyle baseStyle, double noteFontSize) {
-    final style = baseStyle.copyWith(fontSize: noteFontSize, height: 1.0);
+  Widget _notesGrid(Set<int> notes, double noteFontSize) {
+    final style = TextStyle(fontSize: noteFontSize, height: 1.0);
     final cells = List.generate(9, (i) {
       final n = i + 1;
       return Center(
@@ -753,10 +708,9 @@ class _Board extends StatelessWidget {
           final boardSide = constraints.biggest.shortestSide;
           final cellSize = boardSide / 9.0;
 
-          // 동적 폰트
+          // 메모/메인 숫자 폰트 동적 조정
           double noteFontSize = (cellSize / 3.0) * 0.42; // 약 칸의 14%
           noteFontSize = noteFontSize.clamp(6.0, 12.0);
-
           double mainFontSize = (cellSize * 0.48).clamp(16.0, 24.0);
           final cellPadding = cellSize < 36 ? 1.0 : 2.0;
 
@@ -783,11 +737,7 @@ class _Board extends StatelessWidget {
                   ),
                   child: Center(
                     child: v == 0
-                        ? _notesGrid(
-                            app.notes[r][c],
-                            Theme.of(context).textTheme.bodyMedium!,
-                            noteFontSize,
-                          )
+                        ? _notesGrid(app.notes[r][c], noteFontSize)
                         : Text(
                             '$v',
                             style: TextStyle(
@@ -867,7 +817,7 @@ class _KeypadRow extends StatelessWidget {
                 Expanded(
                   child: OutlinedButton.icon(
                     onPressed: app.challengeMode
-                        ? null // 챌린지 모드: 힌트 비활성화
+                        ? null // 챌린지: 힌트 비활성화
                         : () {
                             final state = context.read<MyAppState>();
                             final r = state.selR, c = state.selC;
@@ -889,18 +839,10 @@ class _KeypadRow extends StatelessWidget {
                               );
                               return;
                             }
-                            try {
-                              final cleared = state.hintOneSafe();
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(content: Text(cleared > 0
-                                    ? '힌트 적용! 중복 오답 $cleared칸 정리 후 채웠어요.'
-                                    : '힌트 적용! 정답을 채웠어요.')),
-                              );
-                            } catch (e) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(content: Text(e.toString())),
-                              );
-                            }
+                            state.hintOne();
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('힌트 적용! 정답을 채웠어요.')),
+                            );
                           },
                     icon: const Icon(Icons.lightbulb_outline),
                     label: const Text('힌트'),
@@ -911,27 +853,19 @@ class _KeypadRow extends StatelessWidget {
                   child: ElevatedButton.icon(
                     onPressed: () async {
                       if (app.isSolved()) {
-                        // 챌린지 모드: 이름 입력 후 랭킹 저장
+                        // 챌린지: 이름 입력 → 랭킹 등록
                         if (app.challengeMode) {
                           final nameCtl = TextEditingController();
                           final ok = await showDialog<bool>(
                             context: context,
                             builder: (_) => AlertDialog(
                               title: const Text('챌린지 성공!'),
-                              content: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  const Text('이름을 남길 수 있어요.'),
-                                  const SizedBox(height: 8),
-                                  TextField(
-                                    controller: nameCtl,
-                                    decoration: const InputDecoration(
-                                      hintText: '이름을 입력하세요',
-                                      isDense: true,
-                                    ),
-                                  ),
-                                ],
+                              content: TextField(
+                                controller: nameCtl,
+                                decoration: const InputDecoration(
+                                  hintText: '이름을 입력하세요',
+                                  isDense: true,
+                                ),
                               ),
                               actions: [
                                 TextButton(
@@ -945,7 +879,6 @@ class _KeypadRow extends StatelessWidget {
                               ],
                             ),
                           );
-
                           if (ok == true && nameCtl.text.trim().isNotEmpty) {
                             await context.read<MyAppState>()
                                 .addChallengeRecord(nameCtl.text.trim(), DateTime.now());
@@ -955,21 +888,21 @@ class _KeypadRow extends StatelessWidget {
                               );
                             }
                           }
+                        } else {
+                          await showDialog<void>(
+                            context: context,
+                            builder: (_) => AlertDialog(
+                              title: const Text('정답입니다!'),
+                              content: const Text('수고했어요 👏'),
+                              actions: [
+                                TextButton(
+                                  onPressed: () => Navigator.of(context).pop(),
+                                  child: const Text('확인'),
+                                )
+                              ],
+                            ),
+                          );
                         }
-
-                        await showDialog<void>(
-                          context: context,
-                          builder: (_) => AlertDialog(
-                            title: const Text('정답입니다!'),
-                            content: const Text('수고했어요 👏'),
-                            actions: [
-                              TextButton(
-                                onPressed: () => Navigator.of(context).pop(),
-                                child: const Text('확인'),
-                              )
-                            ],
-                          ),
-                        );
                         if (context.mounted) {
                           Navigator.of(context).pop(); // GamePage 닫기 → 랜딩
                         }
@@ -1013,7 +946,7 @@ class _ChallengeRankingPageState extends State<ChallengeRankingPage> {
 
   Future<void> _load() async {
     final items = await context.read<MyAppState>().loadChallengeLeaderboard();
-    setState(() => _items = items);
+    if (mounted) setState(() => _items = items);
   }
 
   @override
