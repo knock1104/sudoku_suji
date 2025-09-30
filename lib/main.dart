@@ -458,7 +458,7 @@ class _LandingPageState extends State<LandingPage> {
                   if (selected != '챌린지')
                     Row(
                       children: [
-                        const Text('번호 선택 (1-999)'),
+                        const Text('번호 선택 (1-9)'),
                         const SizedBox(width: 12),
                         SizedBox(
                           width: 120,
