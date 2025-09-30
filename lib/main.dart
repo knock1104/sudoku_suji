@@ -841,7 +841,7 @@ class _KeypadRow extends StatelessWidget {
                             }
                             state.hintOne();
                             ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('힌트 적용! 정답을 채웠어요.')),
+                              const SnackBar(content: Text('풋')),
                             );
                           },
                     icon: const Icon(Icons.lightbulb_outline),
@@ -893,7 +893,7 @@ class _KeypadRow extends StatelessWidget {
                             context: context,
                             builder: (_) => AlertDialog(
                               title: const Text('정답입니다!'),
-                              content: const Text('수고했어요 👏'),
+                              content: const Text('더 어려운 난이도에 도전해보세요! 👏'),
                               actions: [
                                 TextButton(
                                   onPressed: () => Navigator.of(context).pop(),
@@ -908,7 +908,7 @@ class _KeypadRow extends StatelessWidget {
                         }
                       } else {
                         ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('다시 생각해보세요')),
+                          const SnackBar(content: Text('다시')),
                         );
                       }
                     },
